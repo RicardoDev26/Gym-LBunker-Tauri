@@ -16,13 +16,13 @@ const initialState: UsersState = {
   usuarioActual: null,
 };
 
-export const obtenerUsuarioPorUUID = createAsyncThunk('usuarios/obtenerUsuarioPorUUID', async (uuid: string) => {
+export const obtenerUsuarioPorUUID = createAsyncThunk('usuarios/obtenerUsuarioPorUUID', async (uuid: string, { rejectWithValue }) => {
   try {
     const response: Usuario = await invoke('obtener_usuario_por_uuid', { uuid });
     return response;
   } catch (error) {
     console.error('Error al obtener usuario:', error);
-    throw error;
+    // return rejectWithValue('Usuario no encontrado');
   }
 });
 
@@ -34,6 +34,8 @@ const userUIID = createSlice({
     builder
       .addCase(obtenerUsuarioPorUUID.pending, (state) => {
         state.status = 'loading';
+        state.error = null;
+        state.usuarioActual = null;
       })
       .addCase(obtenerUsuarioPorUUID.fulfilled, (state, action) => {
         state.status = 'succeeded';
@@ -41,7 +43,7 @@ const userUIID = createSlice({
       })
       .addCase(obtenerUsuarioPorUUID.rejected, (state, action) => {
         state.status = 'failed';
-        state.error = action.error.message;
+        state.error = action.payload as string;
       });
   },
 });

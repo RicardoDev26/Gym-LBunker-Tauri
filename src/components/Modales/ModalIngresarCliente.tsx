@@ -14,7 +14,7 @@ type FormValues = {
 const ModalForm: React.FC = () => {
   const [formValues, setFormValues] = useState<FormValues>({
     fullName: "",
-    membershipDuration: "1 mes",
+    membershipDuration: "30", // Default a 30 días (1 mes)
   });
 
   const handleChange = (
@@ -38,20 +38,20 @@ const ModalForm: React.FC = () => {
 
     console.log("Enviando datos al backend:", {
       nombre: fullName,
-      duracion_visita: parseInt(membershipDuration),
+      duracion_visita: parseInt(membershipDuration, 10),
       foto: null
     });
 
     dispatch(crearUsuario({ 
       nombre: fullName, 
-      duracion_visita: parseInt(membershipDuration), // Asegúrate de que el nombre del parámetro es correcto
+      duracion_visita: parseInt(membershipDuration, 10), // Parsear correctamente como entero
       foto: null // Asumiendo que no se maneja la foto en el formulario actual
     }))
     .then(() => {
-      alert(`Nombre: ${formValues.fullName}, Duración: ${formValues.membershipDuration}`);
+      alert(`Nombre: ${formValues.fullName}, Duración: ${formValues.membershipDuration} días`);
       setFormValues({
         fullName: "",
-        membershipDuration: "1 mes",
+        membershipDuration: "30", // Resetear a la duración por defecto (1 mes)
       });
       handleClose();
     })

@@ -1,12 +1,23 @@
+use std::sync::{Arc, Mutex};
 use chrono::{Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use tauri::State;
 use uuid::Uuid;
+use std::{thread};
+use cron::Schedule;
+use std::str::FromStr;
 
 struct AppState {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl Clone for AppState {
+    fn clone(&self) -> Self {
+        AppState {
+            conn: Arc::clone(&self.conn),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -14,7 +25,7 @@ struct Usuario {
     id: i32,
     nombre: String,
     uuid: String,
-    fecha_inicio: String,
+    fecha_inicio: Option<String>,
     fecha_pago: String,
     fecha_corte: String,
     estado: String,
@@ -23,13 +34,14 @@ struct Usuario {
     foto: Option<String>,
 }
 
+// Inicializa la base de datos creando la tabla de usuarios
 fn inicializar_bd(conn: &Connection) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
             uuid TEXT NOT NULL,
-            fecha_inicio TEXT NOT NULL,
+            fecha_inicio TEXT,
             fecha_pago TEXT NOT NULL,
             fecha_corte TEXT NOT NULL,
             estado TEXT NOT NULL CHECK (estado IN('activo', 'inactivo', 'cancelado')),
@@ -57,10 +69,15 @@ fn agregar_usuario(
     let fecha_corte = fecha_pago + Duration::days(duracion_visita as i64);
     let dias_restantes = (fecha_corte - fecha_actual).num_days();
     let membresia = if duracion_visita >= 30 { "Premium" } else { "Sin membresia" };
+    let fecha_inicio = if membresia == "Premium" {
+        Some(fecha_actual.to_string())
+    } else {
+        None
+    };
 
     println!(
-        "Datos del usuario: nombre={}, uuid={}, fecha_inicio={}, fecha_pago={}, fecha_corte={}, estado=activo, dias_restantes={}, membresia={}, foto={:?}",
-        nombre, uuid, fecha_actual, fecha_pago, fecha_corte, dias_restantes, membresia, foto
+        "Datos del usuario: nombre={}, uuid={}, fecha_inicio={:?}, fecha_pago={}, fecha_corte={}, estado=activo, dias_restantes={}, membresia={}, foto={:?}",
+        nombre, uuid, fecha_inicio, fecha_pago, fecha_corte, dias_restantes, membresia, foto
     );
 
     match conn.execute(
@@ -68,7 +85,7 @@ fn agregar_usuario(
         params![
             nombre,
             uuid,
-            fecha_actual.to_string(),
+            fecha_inicio,
             fecha_pago.to_string(),
             fecha_corte.to_string(),
             "activo",
@@ -86,31 +103,6 @@ fn agregar_usuario(
 }
 
 #[tauri::command]
-fn actualizar_estado_usuarios(state: State<AppState>) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
-    let fecha_actual = Utc::now().naive_utc().date();
-
-    conn.execute(
-        "UPDATE usuarios SET estado = 'inactivo' WHERE estado = 'activo' AND dias_restantes = 0",
-        params![],
-    ).map_err(|e| e.to_string())?;
-
-    let seis_meses = Duration::days(180);
-    conn.execute(
-        "UPDATE usuarios SET estado = 'cancelado', membresia = 'Sin membresia' WHERE estado = 'inactivo' AND julianday('now') - julianday(fecha_pago) >= ?1",
-        params![seis_meses.num_days()],
-    ).map_err(|e| e.to_string())?;
-
-    let un_anio = Duration::days(365);
-    conn.execute(
-        "UPDATE usuarios SET estado = 'cancelado', membresia = 'Sin membresia' WHERE membresia = 'Premium' AND julianday('now') - julianday(fecha_inicio) >= ?1",
-        params![un_anio.num_days()],
-    ).map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
 fn renovar_mensualidad(
     state: State<AppState>,
     usuario_id: i32,
@@ -120,15 +112,33 @@ fn renovar_mensualidad(
     let fecha_actual = Utc::now().naive_utc().date();
     let nueva_fecha_corte = fecha_actual + Duration::days(duracion_renovacion as i64);
     let nuevos_dias_restantes = (nueva_fecha_corte - fecha_actual).num_days();
-    let nueva_membresia = if duracion_renovacion >= 30 { "Premium" } else { "Sin membresia" };
+
+    // Obtener el estado actual del usuario
+    let mut stmt = conn.prepare("SELECT membresia, fecha_inicio FROM usuarios WHERE id = ?1;").map_err(|e| e.to_string())?;
+    let (membresia, fecha_inicio): (String, Option<String>) = stmt.query_row(params![usuario_id], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    }).map_err(|e| e.to_string())?;
+
+    let nueva_membresia = if membresia == "Sin membresia" && duracion_renovacion >= 30 {
+        "Premium"
+    } else {
+        &membresia
+    }.to_string();
+
+    let nueva_fecha_inicio = if nueva_membresia == "Premium" && membresia == "Sin membresia" {
+        Some(fecha_actual.to_string())
+    } else {
+        fecha_inicio
+    };
 
     match conn.execute(
-        "UPDATE usuarios SET fecha_pago = ?1, fecha_corte = ?2, dias_restantes = ?3, membresia = ?4, estado = 'activo' WHERE id = ?5",
+        "UPDATE usuarios SET fecha_pago = ?1, fecha_corte = ?2, dias_restantes = ?3, membresia = ?4, estado = 'activo', fecha_inicio = ?5 WHERE id = ?6",
         params![
             fecha_actual.to_string(),
             nueva_fecha_corte.to_string(),
             nuevos_dias_restantes,
             nueva_membresia,
+            nueva_fecha_inicio,
             usuario_id,
         ],
     ) {
@@ -148,16 +158,17 @@ fn renovar_membresia(
     let conn = state.conn.lock().unwrap();
     let fecha_actual = Utc::now().naive_utc().date();
     let nueva_fecha_inicio = fecha_actual;
-    let nueva_fecha_corte = fecha_actual + Duration::days(365);
-    let nuevos_dias_restantes = (nueva_fecha_corte - fecha_actual).num_days();
+    let nueva_fecha_corte_membresia = fecha_actual + Duration::days(365);
+    let nueva_fecha_corte_mensualidad = fecha_actual + Duration::days(30);
+    let nuevos_dias_restantes_mensualidad = (nueva_fecha_corte_mensualidad - fecha_actual).num_days();
 
     match conn.execute(
         "UPDATE usuarios SET fecha_inicio = ?1, fecha_pago = ?2, fecha_corte = ?3, dias_restantes = ?4, membresia = 'Premium', estado = 'activo' WHERE id = ?5",
         params![
             nueva_fecha_inicio.to_string(),
             fecha_actual.to_string(),
-            nueva_fecha_corte.to_string(),
-            nuevos_dias_restantes,
+            nueva_fecha_corte_mensualidad.to_string(),
+            nuevos_dias_restantes_mensualidad,
             usuario_id,
         ],
     ) {
@@ -215,12 +226,14 @@ fn obtener_usuarios(state: State<AppState>) -> Result<Vec<Usuario>, String> {
     println!("Usuarios obtenidos: {:?}", usuarios);
     Ok(usuarios)
 }
+
 #[tauri::command]
 fn obtener_usuario_por_uuid(state: State<AppState>, uuid: String) -> Result<Usuario, String> {
     let conn = state.conn.lock().unwrap();
     let mut stmt = conn.prepare("SELECT id, nombre, uuid, fecha_inicio, fecha_pago, fecha_corte, estado, dias_restantes, membresia, foto FROM usuarios WHERE uuid = ?1;")
         .map_err(|e| e.to_string())?;
-    let usuario = stmt.query_row(params![uuid], |row| {
+    
+    match stmt.query_row(params![uuid], |row| {
         Ok(Usuario {
             id: row.get(0)?,
             nombre: row.get(1)?,
@@ -233,9 +246,52 @@ fn obtener_usuario_por_uuid(state: State<AppState>, uuid: String) -> Result<Usua
             membresia: row.get(8)?,
             foto: row.get(9)?,
         })
-    }).map_err(|e| e.to_string())?;
+    }) {
+        Ok(usuario) => Ok(usuario),
+        Err(_) => Err("Usuario no encontrado".to_string()),
+    }
+}
 
-    Ok(usuario)
+fn actualizar_dias_restantes(state: &AppState) -> Result<(), String> {
+    let conn = state.conn.lock().unwrap();
+
+    // Disminuir los días restantes para usuarios activos
+    conn.execute(
+        "UPDATE usuarios SET dias_restantes = dias_restantes - 1 WHERE estado = 'activo' AND dias_restantes > 0",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    // Cambiar estado a 'inactivo' si los días restantes llegan a 0
+    conn.execute(
+        "UPDATE usuarios SET estado = 'inactivo' WHERE estado = 'activo' AND dias_restantes <= 0",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn actualizar_estado_usuarios(state: State<AppState>) -> Result<(), String> {
+    let conn = state.conn.lock().unwrap();
+
+    conn.execute(
+        "UPDATE usuarios SET estado = 'inactivo' WHERE estado = 'activo' AND dias_restantes = 0",
+        params![],
+    ).map_err(|e| e.to_string())?;
+
+    let seis_meses = Duration::days(180);
+    conn.execute(
+        "UPDATE usuarios SET estado = 'cancelado', membresia = 'Sin membresia' WHERE estado = 'inactivo' AND julianday('now') - julianday(fecha_pago) >= ?1",
+        params![seis_meses.num_days()],
+    ).map_err(|e| e.to_string())?;
+
+    let un_anio = Duration::days(365);
+    conn.execute(
+        "UPDATE usuarios SET estado = 'cancelado', membresia = 'Sin membresia' WHERE membresia = 'Premium' AND julianday('now') - julianday(fecha_inicio) >= ?1",
+        params![un_anio.num_days()],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 fn main() {
@@ -243,8 +299,20 @@ fn main() {
     inicializar_bd(&conn).expect("No se pudo inicializar la base de datos");
 
     let state = AppState {
-        conn: Mutex::new(conn),
+        conn: Arc::new(Mutex::new(conn)),
     };
+
+    // Configurar el cron job
+    let schedule = Schedule::from_str("0 0 0 * * *").unwrap(); // Ejecutar cada día a medianoche UTC
+    let state_clone = state.clone(); // Clonamos el estado
+    thread::spawn(move || {
+        for datetime in schedule.upcoming(Utc) {
+            let now = Utc::now();
+            let duration = datetime - now;
+            thread::sleep(duration.to_std().unwrap());
+            let _ = actualizar_dias_restantes(&state_clone);
+        }
+    });
 
     tauri::Builder::default()
         .manage(state)

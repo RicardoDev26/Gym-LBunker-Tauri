@@ -54,7 +54,7 @@ const TableClients: React.FC<TableClientsProps> = ({ onOpenModal }) => {
     return (
       usuario.uuid.toLowerCase().includes(query) ||
       usuario.nombre.toLowerCase().includes(query) ||
-      usuario.fecha_inicio.toLowerCase().includes(query) ||
+      (usuario.fecha_inicio && usuario.fecha_inicio.toLowerCase().includes(query)) ||
       usuario.fecha_pago.toLowerCase().includes(query) ||
       usuario.fecha_corte.toLowerCase().includes(query) ||
       usuario.membresia.toLowerCase().includes(query) ||
@@ -95,9 +95,6 @@ const TableClients: React.FC<TableClientsProps> = ({ onOpenModal }) => {
   return (
     <div className="container bg-[#2F2F2F] mx-auto p-4 pt-[100px] mb-20">
       <div className="flex justify-between mb-4">
-        {/* <button onClick={handleLoadUsers} className="px-4 py-2 bg-blue-500 text-white rounded">
-          Cargar Usuarios
-        </button> */}
         <input
           type="text"
           placeholder="Buscar..."

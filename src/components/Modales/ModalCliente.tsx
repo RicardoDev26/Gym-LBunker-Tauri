@@ -20,34 +20,6 @@ const ModalInfoCliente: React.FC<ModalInfoClienteProps> = ({ modalState, onClose
 
   if (modalState === ModalStateEnum.NULL) return null;
 
-  const handlePagarMensualidad = () => {
-    dispatch(renovarMensualidad({ usuarioId: usuario.id, duracion }))
-      .then(() => {
-        // Update dates after successful dispatch
-        const nuevaFechaPago = new Date(usuario.fecha_pago);
-        nuevaFechaPago.setDate(nuevaFechaPago.getDate() + duracion);
-        const nuevaFechaCorte = new Date(usuario.fecha_corte);
-        nuevaFechaCorte.setDate(nuevaFechaCorte.getDate() + duracion);
-
-        usuario.fecha_pago = nuevaFechaPago.toISOString().split('T')[0];
-        usuario.fecha_corte = nuevaFechaCorte.toISOString().split('T')[0];
-      });
-  };
-
-  const handleRenovarMembresia = () => {
-    dispatch(renovarMembresia(usuario.id))
-      .then(() => {
-        // Update dates for a full year membership renewal
-        const nuevaFechaInicio = new Date();
-        const nuevaFechaCorte = new Date();
-        nuevaFechaCorte.setFullYear(nuevaFechaCorte.getFullYear() + 1);
-
-        usuario.fecha_inicio = nuevaFechaInicio.toISOString().split('T')[0];
-        usuario.fecha_pago = nuevaFechaInicio.toISOString().split('T')[0];
-        usuario.fecha_corte = nuevaFechaCorte.toISOString().split('T')[0];
-      });
-  };
-
   const handleFotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       const file = event.target.files[0];
@@ -68,9 +40,21 @@ const ModalInfoCliente: React.FC<ModalInfoClienteProps> = ({ modalState, onClose
     }
   };
 
+  const handleRenovarMembresia = () => {
+    dispatch(renovarMembresia(usuario.id))
+      .then(() => console.log('Membresía renovada correctamente'))
+      .catch((error) => console.error('Error al renovar membresía:', error));
+  };
+
+  const handleRenovarMensualidad = () => {
+    dispatch(renovarMensualidad({ usuarioId: usuario.id, duracionRenovacion: duracion }))
+      .then(() => console.log('Mensualidad renovada correctamente'))
+      .catch((error) => console.error('Error al renovar mensualidad:', error));
+  };
+
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm z-50">
-      <div className="relative rounded-3xl py-3 px-3 bg-[#FF5722] w-[400px] h-[600px] flex flex-col items-center gap-7 shadow-lg">
+      <div className="relative rounded-3xl py-3 px-3 bg-orange-500 bg-opacity-60 backdrop-blur-md w-[400px] h-[600px] flex flex-col items-center gap-7 shadow-lg">
         <button
           onClick={onClose}
           className="absolute top-3 right-3 text-black font-bold text-xl"
@@ -96,10 +80,9 @@ const ModalInfoCliente: React.FC<ModalInfoClienteProps> = ({ modalState, onClose
           <h1 className="font-bold">Fecha de Corte: <span className="font-bold text-white">{usuario.fecha_corte}</span></h1>
           <h1 className="font-bold">Días restantes: <span className="font-bold text-white">{usuario.dias_restantes}</span></h1>
         </div>
-        <div className="flex  gap-4">
-    
+        <div className="flex gap-4">
           <button
-            onClick={handlePagarMensualidad}
+            onClick={handleRenovarMensualidad}
             className="bg-[#2F2F2F] border-solid border-[1px] border-[#E0E0E0] text-white rounded-lg hover:bg-gray-900 px-4 py-2"
           >
             Pagar Mensualidad
@@ -109,12 +92,6 @@ const ModalInfoCliente: React.FC<ModalInfoClienteProps> = ({ modalState, onClose
             className="bg-[#2F2F2F] border-solid border-[1px] border-[#E0E0E0] text-white rounded-lg hover:bg-gray-900 px-4 py-2"
           >
             Renovar Membresía
-          </button>
-          <button
-            onClick={handlePagarMensualidad} // Adjust this function if you have different logic for paying membership
-            className="bg-[#2F2F2F] border-solid border-[1px] border-[#E0E0E0] text-white rounded-lg hover:bg-gray-900 px-4 py-2"
-          >
-            Pagar Membresía
           </button>
         </div>
       </div>
